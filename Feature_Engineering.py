@@ -30,10 +30,9 @@ df.loc[mask_left, 'ball_land_x'] = 120.0 - df.loc[mask_left, 'ball_land_x']
 # mirror horizontally longitudinal velocity
 df.loc[mask_left, 'vx'] = -df.loc[mask_left, 'vx']
 
-# if you still need 'dir' or 'o' angles, recompute from vx,vy to be consistent:
+# Recompute from vx,vy
 new_rad = np.arctan2(df['vy'], df['vx'])
 df['dir'] = (np.rad2deg(new_rad) % 360)
-# orientation 'o' may need recomputing if it was in the same frame; if not, leave original or recompute similarly.
 
 # Feature engineering
 
@@ -155,3 +154,5 @@ release_df['min_defender_speed'] = min_defender_speed
 release_df['relative_speed_nearest_defender'] = relative_speed_nearest_defender
 release_df['player_avg_speed'] = avg_speed
 release_df['player_avg_acceleration'] = avg_acceleration
+
+release_df.to_csv("release_df.csv", index=False)
