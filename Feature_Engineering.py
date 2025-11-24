@@ -155,4 +155,13 @@ release_df['relative_speed_nearest_defender'] = relative_speed_nearest_defender
 release_df['player_avg_speed'] = avg_speed
 release_df['player_avg_acceleration'] = avg_acceleration
 
+release_df['velocity_x'] = release_df['s'] * np.cos(release_df['dir_rad'])
+release_df['velocity_y'] = release_df['s'] * np.sin(release_df['dir_rad'])
+
+release_df['momentum_x'] = release_df['velocity_x'] * release_df['player_weight']
+release_df['momentum_y'] = release_df['velocity_y'] * release_df['player_weight']
+
+release_df['left_distance'] = release_df['y']
+release_df['right_distance'] = 53.3 - release_df['y']
+
 release_df.to_csv("release_df.csv", index=False)
