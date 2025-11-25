@@ -22,6 +22,15 @@ for file in csv_files:
 
 training_df = pd.concat(dataframes, ignore_index=True)
 
+expected = {'game_id','play_id','nfl_id','frame_id','x','y','s','a','dir','player_role','ball_land_x','ball_land_y'}
+print("Missing expected:", expected - set(training_df.columns))
+
+# range checking
+print(training_df['x'].describe(), training_df['y'].describe())
+
+# duplicates?
+print("Duplicates:", training_df.duplicated().sum())
+
 # Save to a new CSV
 training_df.to_csv(("training_data.csv"), index=False)
 
