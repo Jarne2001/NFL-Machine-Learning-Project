@@ -192,16 +192,16 @@ features = [
     'velocity_x','velocity_y','momentum_x','momentum_y']
 
 # check NaN % number
-nan_percent = (release_df[expected].isna().mean() * 100).sort_values(ascending=False)
+nan_percent = (release_df[features].isna().mean() * 100).sort_values(ascending=False)
 print(nan_percent)
 
 # Summary statistics
 print("\n--- Summary Stats ---")
-print(release_df[expected[:7]].describe())
-print(release_df[expected[7:14]].describe())
-print(release_df[expected[14:21]].describe())
-print(release_df[expected[21:27]].describe())
-print(release_df[expected[27:]].describe())
+print(release_df[features[:7]].describe())
+print(release_df[features[7:14]].describe())
+print(release_df[features[14:21]].describe())
+print(release_df[features[21:27]].describe())
+print(release_df[features[27:]].describe())
 release_df.dtypes
 
 release_df.to_csv("features_data.csv", index=False)
