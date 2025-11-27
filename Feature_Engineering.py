@@ -48,10 +48,9 @@ inches = pd.to_numeric(height[1], errors='coerce')
 
 # Compute total height in inches
 df['player_height_inches'] = feet * 12 + inches
-
 df['player_birth_date'] = pd.to_datetime(df['player_birth_date'], errors='coerce')
-
-df['player_age'] = 2023 - df['player_birth_date'].dt.year
+df['player_weight_kg'] = df['player_weight'] * 0.45359237
+df['player_age'] = pd.to_datetime('2023-01-01').year - df['player_birth_date'].dt.year
 
 # Angles because models dont enjoy wrapping around angles
 rad = np.deg2rad(df['dir'])
@@ -172,8 +171,9 @@ release_df['player_avg_acceleration'] = avg_acceleration
 release_df['velocity_x'] = release_df['s'] * np.cos(release_df['dir_rad'])
 release_df['velocity_y'] = release_df['s'] * np.sin(release_df['dir_rad'])
 
-release_df['momentum_x'] = (release_df['velocity_x'] * release_df['player_weight'])/1000
-release_df['momentum_y'] = (release_df['velocity_y'] * release_df['player_weight'])/1000
+yd_to_m = 0.9144
+release_df['momentum_x'] = release_df['velocity_x'] * yd_to_m * release_df['player_weight_kg']
+release_df['momentum_y'] = release_df['velocity_y'] * yd_to_m * release_df['player_weight_kg']
 
 release_df['left_distance'] = release_df['y']
 release_df['right_distance'] = 53.3 - release_df['y']
@@ -183,13 +183,18 @@ features = [
     'game_id','play_id','nfl_id','frame_id','x','y','s','a','dir','o','vx','vy',
     'player_position','player_role','player_side',
     'dir_sin','dir_cos','o_sin','o_cos','dir_rad',
-    'ball_dx','ball_dy','ball_land_x','ball_land_y','distance_to_ball','ball_angle','angle_diff_ball','eta_to_ball',
+    'ball_dx','ball_dy','distance_to_ball','ball_angle','angle_diff_ball','eta_to_ball',
     'heading_alignment','projection_x','projection_y','projection_distance_to_ball', 'endzone_distance',
     'dx_last','dy_last','ds_last','ddir_last',
     'min_defender_dist_to_landing', f'n_def_within_{int(defenders_radius)}',
     'min_defender_to_receiver_dist','min_defender_speed','relative_speed_nearest_defender',
-    'player_height_inches','player_weight','player_birth_date','player_age','player_avg_speed','player_avg_acceleration',
+    'player_height_inches','player_weight', 'player_weight_kg', 'player_birth_date','player_age','player_avg_speed','player_avg_acceleration',
     'velocity_x','velocity_y','momentum_x','momentum_y']
+
+release_df[['min_defender_dist_to_landing','min_defender_to_receiver_dist',
+            'relative_speed_nearest_defender','min_defender_speed']] = \
+release_df[['min_defender_dist_to_landing','min_defender_to_receiver_dist',
+                'relative_speed_nearest_defender','min_defender_speed']].fillna(0)
 
 # check NaN % number
 nan_percent = (release_df[features].isna().mean() * 100).sort_values(ascending=False)
@@ -202,6 +207,10 @@ print(release_df[features[7:14]].describe())
 print(release_df[features[14:21]].describe())
 print(release_df[features[21:27]].describe())
 print(release_df[features[27:]].describe())
-release_df.dtypes
+feature_dtypes = release_df[features].dtypes
+
+# dtype checking
+for col, dtype in feature_dtypes.items():
+    print(f"{col}: {dtype}")
 
 release_df.to_csv("features_data.csv", index=False)
