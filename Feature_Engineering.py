@@ -239,44 +239,22 @@ release_df['right_distance'] = 53.3 - release_df['y']
 
 # Feature evaluation
 features = [
-    # IDs & frame info
     'game_id','play_id','nfl_id','frame_id',
-    
-    # Raw player position & movement
     'x','y','s','a','dir','o','vx','vy','acceleration_x','acceleration_y',
-    
-    # Player attributes
     'player_position','player_role','player_side','player_height_inches','player_weight','player_weight_kg',
     'player_birth_date','player_age','player_avg_speed','player_avg_acceleration',
-    
-    # Angles
     'dir_sin','dir_cos','o_sin','o_cos','dir_rad',
-    
-    # Ball-relative features
     'ball_dx','ball_dy','distance_to_ball','ball_angle','angle_diff_ball','eta_to_ball','heading_alignment',
     'projection_x','projection_y','projection_distance_to_ball','endzone_distance',
-    
-    # Temporal deltas
     'dx_last','dy_last','ds_last','ddir_last',
-    
-    # Defensive features
     'min_defender_dist_to_landing', f'n_def_within_{int(teammate_radius)}',
     'min_defender_to_receiver_dist','min_defender_speed','relative_speed_nearest_defender',
-    
-    # Offensive teammate interactions
     'distance_nearest_offensive','mean_distance_offensive','number_offensive','angle_to_offensive',
-    
-    # Physics-based features
     'squared_speed','velocity_x','velocity_y','momentum_x','momentum_y',
     'combined_acceleration','speed_m_s','kinetic_energy',
-    
-    # Field-relative distances
     'left_distance','right_distance',
-    
-    # Additional role indicators
     'is_targeted','is_passer','is_defense','role_targeted_receiver','is_offense','is_receiver','is_coverage',
-    'defensive_coverage','offensive_side','passing_role'
-]
+    'defensive_coverage','offensive_side','passing_role']
 
 # check NaN % number
 nan_percent = (release_df[features].isna().mean() * 100).sort_values(ascending=False)
