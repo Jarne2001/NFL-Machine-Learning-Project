@@ -1,1 +1,196 @@
+"""
+NFL Random Forest trajectory prediction
+Regressiemodel voor (x, y) met GroupKFold cross-validation
+"""
+
+import os
+import time
+import json
+import glob
+import numpy as np
+import pandas as pd
+
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.model_selection import GroupKFold
+import joblib
+
+# CONFIG
+FEATURES_PATH = r"C:\Users\thoml\OneDrive\Documenten\Uhasselt master jaar 2 sem 1\Machine learning\Kaggle competition\features_data.csv"
+OUTPUT_PATTERN = r"C:\Users\thoml\OneDrive\Documenten\Uhasselt master jaar 2 sem 1\Machine learning\Kaggle competition\nfl-big-data-bowl-2026-prediction\train\output_2023_w??.csv"
+TRAINING_PATH = r"C:\Users\thoml\OneDrive\Documenten\Uhasselt master jaar 2 sem 1\Machine learning\Kaggle competition\training_data.csv"
+
+ARTIFACT_DIR = "rf_nfl_artifacts"
+RANDOM_SEED = 42
+N_FOLDS = 5
+
+os.makedirs(ARTIFACT_DIR, exist_ok=True)
+
+# DATA
+print("Loading data...")
+features_df = pd.read_csv(FEATURES_PATH)
+output_files = sorted(glob.glob(OUTPUT_PATTERN))
+output_df = pd.concat([pd.read_csv(f) for f in output_files], ignore_index=True)
+training_df = pd.read_csv(TRAINING_PATH)
+
+# Play direction aanpassen
+play_dirs = training_df[['game_id', 'play_id', 'play_direction']].drop_duplicates()
+output_df = output_df.merge(play_dirs, on=['game_id', 'play_id'], how='left')
+mask_left_out = output_df['play_direction'] == 'left'
+output_df.loc[mask_left_out, 'x'] = 120.0 - output_df.loc[mask_left_out, 'x']
+
+# FEATURE SELECTIE
+feature_cols = [
+    'x','y','s','a','vx','vy','dir_sin','dir_cos','o_sin','o_cos','dir_rad',
+    'ball_dx','ball_dy','ball_land_x','ball_land_y','distance_to_ball',
+    'ball_angle','angle_diff_ball','eta_to_ball','heading_alignment',
+    'projection_x','projection_y','projection_distance_to_ball',
+    'endzone_distance','dx_last','dy_last','ds_last','ddir_last',
+    'min_defender_dist_to_landing','n_def_within_5',
+    'min_defender_to_receiver_dist','min_defender_speed',
+    'relative_speed_nearest_defender','player_height_inches','player_weight',
+    'player_age','player_avg_speed','player_avg_acceleration',
+    'velocity_x','velocity_y','momentum_x','momentum_y',
+    'left_distance','right_distance','is_targeted','is_passer','is_defense'
+]
+feature_cols = [c for c in feature_cols if c in features_df.columns]
+
+# Role features aanmaken
+if 'player_role' in features_df.columns:
+    if 'is_targeted' not in features_df.columns:
+        features_df['is_targeted'] = (features_df['player_role'] == 'Targeted Receiver').astype(int)
+    if 'is_passer' not in features_df.columns:
+        features_df['is_passer'] = (features_df['player_role'] == 'Passer').astype(int)
+
+if 'player_side' in features_df.columns:
+    if 'is_defense' not in features_df.columns:
+        features_df['is_defense'] = (features_df['player_side'] == 'Defense').astype(int)
+
+# TARGETS
+first_frame = output_df.groupby(['game_id','play_id','nfl_id']).first().reset_index()
+first_frame = first_frame.rename(columns={'x':'target_x','y':'target_y'})
+
+df = features_df.merge(
+    first_frame[['game_id','play_id','nfl_id','target_x','target_y']],
+    on=['game_id','play_id','nfl_id'],
+    how='inner'
+).dropna(subset=feature_cols + ['target_x','target_y'])
+
+X = df[feature_cols].astype('float32').values
+y_x = df['target_x'].values
+y_y = df['target_y'].values
+groups = df['game_id'].values
+
+# CROSS-VALIDATION
+print("Starting cross-validation...")
+kfold = GroupKFold(n_splits=N_FOLDS)
+
+fold_results = []
+y_true_x_all, y_pred_x_all = [], []
+y_true_y_all, y_pred_y_all = [], []
+
+start = time.time()
+
+for fold, (train_idx, val_idx) in enumerate(kfold.split(X, groups=groups), 1):
+    print(f"Fold {fold}")
+
+    X_train, X_val = X[train_idx], X[val_idx]
+    y_x_train, y_x_val = y_x[train_idx], y_x[val_idx]
+    y_y_train, y_y_val = y_y[train_idx], y_y[val_idx]
+
+    scaler = StandardScaler()
+    X_train_s = scaler.fit_transform(X_train)
+    X_val_s = scaler.transform(X_val)
+
+    rf_x = RandomForestRegressor(
+        n_estimators=200, max_depth=20, min_samples_leaf=5,
+        n_jobs=-1, random_state=RANDOM_SEED
+    )
+    rf_x.fit(X_train_s, y_x_train)
+    pred_x = rf_x.predict(X_val_s)
+
+    rf_y = RandomForestRegressor(
+        n_estimators=200, max_depth=20, min_samples_leaf=5,
+        n_jobs=-1, random_state=RANDOM_SEED
+    )
+    rf_y.fit(X_train_s, y_y_train)
+    pred_y = rf_y.predict(X_val_s)
+
+    mae_x = mean_absolute_error(y_x_val, pred_x)
+    mae_y = mean_absolute_error(y_y_val, pred_y)
+    euclidean = np.sqrt((pred_x - y_x_val)**2 + (pred_y - y_y_val)**2).mean()
+    r2_x = r2_score(y_x_val, pred_x)
+    r2_y = r2_score(y_y_val, pred_y)
+
+    fold_results.append({
+        "fold": fold,
+        "mae_x": mae_x,
+        "mae_y": mae_y,
+        "mae_eucl": euclidean,
+        "r2_x": r2_x,
+        "r2_y": r2_y
+    })
+
+    y_true_x_all.extend(y_x_val)
+    y_pred_x_all.extend(pred_x)
+    y_true_y_all.extend(y_y_val)
+    y_pred_y_all.extend(pred_y)
+
+# OVERALL RESULTS
+y_true_x_all = np.array(y_true_x_all)
+y_pred_x_all = np.array(y_pred_x_all)
+y_true_y_all = np.array(y_true_y_all)
+y_pred_y_all = np.array(y_pred_y_all)
+
+overall_mae_x = mean_absolute_error(y_true_x_all, y_pred_x_all)
+overall_mae_y = mean_absolute_error(y_true_y_all, y_pred_y_all)
+overall_eucl = np.sqrt(
+    (y_pred_x_all - y_true_x_all)**2 + 
+    (y_pred_y_all - y_true_y_all)**2
+).mean()
+
+print("Cross-validation complete.")
+print("MAE_x:", round(overall_mae_x, 3))
+print("MAE_y:", round(overall_mae_y, 3))
+print("MAE_euclidean:", round(overall_eucl, 3))
+
+# SAVE RESULTS
+pd.DataFrame(fold_results).to_csv(f"{ARTIFACT_DIR}/rf_fold_results.csv", index=False)
+
+all_preds = pd.DataFrame({
+    "y_true_x": y_true_x_all,
+    "y_pred_x": y_pred_x_all,
+    "y_true_y": y_true_y_all,
+    "y_pred_y": y_pred_y_all
+})
+all_preds.to_csv(f"{ARTIFACT_DIR}/rf_all_predictions.csv", index=False)
+
+# FINAL MODEL
+scaler_final = StandardScaler().fit(X)
+X_s = scaler_final.transform(X)
+
+rf_x_final = RandomForestRegressor(
+    n_estimators=200, max_depth=20, min_samples_leaf=5,
+    n_jobs=-1, random_state=RANDOM_SEED
+).fit(X_s, y_x)
+
+rf_y_final = RandomForestRegressor(
+    n_estimators=200, max_depth=20, min_samples_leaf=5,
+    n_jobs=-1, random_state=RANDOM_SEED
+).fit(X_s, y_y)
+
+joblib.dump(rf_x_final, f"{ARTIFACT_DIR}/rf_x_final.joblib")
+joblib.dump(rf_y_final, f"{ARTIFACT_DIR}/rf_y_final.joblib")
+joblib.dump(scaler_final, f"{ARTIFACT_DIR}/scaler_final.joblib")
+
+with open(f"{ARTIFACT_DIR}/model_meta.json", "w") as f:
+    json.dump({
+        "features": feature_cols,
+        "mae_x": float(overall_mae_x),
+        "mae_y": float(overall_mae_y),
+        "mae_euclidean": float(overall_eucl)
+    }, f, indent=2)
+
+print("Finished.")
 
