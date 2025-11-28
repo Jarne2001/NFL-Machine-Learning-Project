@@ -9,8 +9,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-training_df = pd.read_csv("training_data.csv")
-
 # Normalizing play direction (otherwise model must learn symmetry) (move to the right)
 # This reduces variance and speeds up training
 
@@ -105,9 +103,9 @@ release_df = release_df.merge(deltas, on=['game_id','play_id','nfl_id'], how='le
 release_df['is_targeted'] = (release_df['player_role'] == 'Targeted Receiver').astype(int)
 release_df['is_passer'] = (release_df['player_role'] == 'Passer').astype(int)
 release_df['is_defense'] = (release_df['player_side'] == 'Defense').astype(int)
+release_df['is_receiver'] = (release_df['player_role'] == 'Targeted Receiver').astype(int)
 release_df['role_targeted_receiver'] = release_df['is_receiver']
 release_df['is_offense'] = (release_df['player_side'] == 'Offense').astype(int)
-release_df['is_receiver'] = (release_df['player_role'] == 'Targeted Receiver').astype(int)
 release_df['is_coverage'] = (release_df['player_role'] == 'Defensive Coverage').astype(int)
 release_df['defensive_coverage'] = release_df['is_coverage']
 release_df['offensive_side'] = release_df['is_offense']
@@ -182,6 +180,14 @@ for (gid, pid), grp in release_df.groupby(['game_id', 'play_id']):
     players_idx = grp.index.values
     off_players = grp[grp['player_side'] == 'Offense']
     
+    # If no offensive players, skip this play
+    if len(off_players) == 0:
+        dist_nearest_off.extend([np.nan] * len(grp))
+        mean_dist_off.extend([np.nan] * len(grp))
+        n_off_within_R.extend([0] * len(grp))
+        angle_to_off.extend([np.nan] * len(grp))
+        continue
+    
     px = grp['x'].to_numpy()
     py = grp['y'].to_numpy()
     dir_rad = np.deg2rad(grp['dir'].to_numpy())
@@ -196,14 +202,27 @@ for (gid, pid), grp in release_df.groupby(['game_id', 'play_id']):
         if grp.iloc[i]['player_side'] == 'Offense':
             # Ignore self
             self_idx = np.where((off_x == px[i]) & (off_y == py[i]))[0][0]
-            dists_off[self_idx] = np.inf
+            dists_off[self_idx] = np.inf  # Set self distance to infinity
         
         # Distance to nearest offensive teammate
         nearest_dist = np.min(dists_off)
+        
+        # If nearest distance is inf (i.e., no offensive players within range), replace with np.nan or max distance
+        if nearest_dist == np.inf:
+            nearest_dist = np.nan  # or use a large value like np.max(dists_off) if you prefer
+        
         dist_nearest_off.append(nearest_dist)
         
-        # Average distance to all teammates
-        mean_dist_off.append(np.mean(dists_off[dists_off != np.inf]))
+        # Average distance to all teammates (excluding self and inf distances)
+        valid_dists = dists_off[dists_off != np.inf]
+        
+        # Check if valid_dists is not empty to avoid mean of empty slice
+        if len(valid_dists) > 0:
+            mean_dist = np.mean(valid_dists)
+        else:
+            mean_dist = np.nan  # If no valid distances, assign NaN
+        
+        mean_dist_off.append(mean_dist)
         
         # Count teammates within radius
         n_off_within_R.append(np.sum(dists_off <= teammate_radius))
@@ -215,6 +234,7 @@ for (gid, pid), grp in release_df.groupby(['game_id', 'play_id']):
         angle = (angle + np.pi) % (2 * np.pi) - np.pi
         angle_to_off.append(angle)
 
+# Add new features to the dataframe
 release_df['distance_nearest_offensive'] = dist_nearest_off
 release_df['mean_distance_offensive'] = mean_dist_off
 release_df['number_offensive'] = n_off_within_R
@@ -222,16 +242,18 @@ release_df['angle_to_offensive'] = angle_to_off
 
 # Physics-based calculated features
 release_df['squared_speed'] = release_df['s'] ** 2
-release_df['velocity_x'] = release_df['s'] * np.cos(release_df['dir_rad'])
-release_df['velocity_y'] = release_df['s'] * np.sin(release_df['dir_rad'])
 release_df['acceleration_x'] = release_df['a'] * np.cos(rad)
 release_df['acceleration_y'] = release_df['a'] * np.sin(rad)
 
-release_df['momentum_x'] = release_df['velocity_x'] * 0.9144 * release_df['player_weight_kg']
-release_df['momentum_y'] = release_df['velocity_y'] * 0.9144 * release_df['player_weight_kg']
+release_df['momentum_x'] = release_df['vx'] * 0.9144 * release_df['player_weight_kg']
+release_df['momentum_y'] = release_df['vy'] * 0.9144 * release_df['player_weight_kg']
 release_df['combined_acceleration'] = np.sqrt(release_df['acceleration_x']**2 + release_df['acceleration_y']**2)
 release_df['speed_m_s'] = release_df['s'] * 0.9144
 release_df['kinetic_energy'] = 0.5 * release_df['player_weight_kg'] * release_df['speed_m_s']**2
+
+release_df['age_speed'] = release_df['player_age'] * release_df['s']
+release_df['weight_momentum_x'] = release_df['player_weight_kg'] * release_df['momentum_x']
+release_df['weight_momentum_y'] = release_df['player_weight_kg'] * release_df['momentum_y']
 
 # Distance features
 release_df['left_distance'] = release_df['y']
@@ -242,6 +264,7 @@ features = [
     'game_id','play_id','nfl_id','frame_id',
     'x','y','s','a','dir','o','vx','vy','acceleration_x','acceleration_y',
     'player_position','player_role','player_side','player_height_inches','player_weight','player_weight_kg',
+    'age_speed', 'weight_momentum_x', 'weight_momentum_y',
     'player_birth_date','player_age','player_avg_speed','player_avg_acceleration',
     'dir_sin','dir_cos','o_sin','o_cos','dir_rad',
     'ball_dx','ball_dy','distance_to_ball','ball_angle','angle_diff_ball','eta_to_ball','heading_alignment',
@@ -250,7 +273,7 @@ features = [
     'min_defender_dist_to_landing', f'n_def_within_{int(teammate_radius)}',
     'min_defender_to_receiver_dist','min_defender_speed','relative_speed_nearest_defender',
     'distance_nearest_offensive','mean_distance_offensive','number_offensive','angle_to_offensive',
-    'squared_speed','velocity_x','velocity_y','momentum_x','momentum_y',
+    'squared_speed','momentum_x','momentum_y',
     'combined_acceleration','speed_m_s','kinetic_energy',
     'left_distance','right_distance',
     'is_targeted','is_passer','is_defense','role_targeted_receiver','is_offense','is_receiver','is_coverage',
@@ -261,9 +284,9 @@ nan_percent = (release_df[features].isna().mean() * 100).sort_values(ascending=F
 print(nan_percent)
 
 release_df[['min_defender_dist_to_landing','min_defender_to_receiver_dist',
-            'relative_speed_nearest_defender','min_defender_speed', 'mean_distance_offensive']] = \
+            'relative_speed_nearest_defender','min_defender_speed', 'mean_distance_offensive', 'distance_nearest_offensive']] = \
 release_df[['min_defender_dist_to_landing','min_defender_to_receiver_dist',
-                'relative_speed_nearest_defender','min_defender_speed', 'mean_distance_offensive']].fillna(0)
+                'relative_speed_nearest_defender','min_defender_speed', 'mean_distance_offensive', 'distance_nearest_offensive']].fillna(0)
 
 # Summary statistics
 print("\n--- Summary Stats ---")
@@ -274,7 +297,6 @@ print(release_df[features[21:27]].describe())
 print(release_df[features[27:35]].describe())
 print(release_df[features[35:]].describe())
 feature_dtypes = release_df[features].dtypes
-
 # dtype checking
 for col, dtype in feature_dtypes.items():
     print(f"{col}: {dtype}")
