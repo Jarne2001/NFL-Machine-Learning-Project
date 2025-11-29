@@ -35,7 +35,6 @@ df['dir'] = (np.rad2deg(new_rad) % 360)
 teammate_radius=5.0
 linear_projection=1.0
 eps=1e-6
-last_n = 3
 
 # Compute total height in inches + other player-based features
 height = df['player_height'].str.split('-', expand=True)
@@ -46,6 +45,8 @@ df['player_height_inches'] = feet * 12 + inches
 df['player_birth_date'] = pd.to_datetime(df['player_birth_date'], errors='coerce')
 df['player_weight_kg'] = df['player_weight'] * 0.45359237
 df['player_age'] = pd.to_datetime('2023-01-01').year - df['player_birth_date'].dt.year
+df['player_height_meters'] = df['player_height_inches'] * 0.0254
+df['player_bmi'] = df['player_weight_kg'] / (df['player_height_meters'] ** 2)
 
 # Angles because models dont enjoy wrapping around angles
 rad = np.deg2rad(df['dir'])
@@ -61,9 +62,6 @@ release_df = df[last_frame].copy().reset_index(drop=True)
 
 # Ball landing + features
 if 'ball_land_x' in df:
-    df['ball_dx'] = df['ball_land_x'] - df['x']
-    df['ball_dy'] = df['ball_land_y'] - df['y']
-    df['distance_to_ball'] = np.hypot(df['ball_dx'], df['ball_dy'])
     release_df['ball_dx'] = release_df['ball_land_x'] - release_df['x']
     release_df['ball_dy'] = release_df['ball_land_y'] - release_df['y']
     release_df['distance_to_ball'] = np.hypot(release_df['ball_dx'], release_df['ball_dy'])
@@ -86,15 +84,27 @@ release_df['projection_distance_to_ball'] = np.hypot(release_df['projection_x'] 
 release_df['endzone_distance'] = 120.0 - release_df['x']
 # Deltas from previous frames
 df_sorted = df.sort_values(['game_id','play_id','nfl_id','frame_id'])
+df['num_frames_output'].min()
 def last_deltas(g):
+    minimum_frames = 3
+    available_frames = len(g)
+    last_n = min(available_frames, minimum_frames)
     g = g.tail(last_n)
-    out = {'dx_last': np.nan, 'dy_last': np.nan, 'ds_last': np.nan, 'ddir_last': np.nan}
+    out = {'dx_last': np.nan, 'dy_last': np.nan, 'ds_last': np.nan, 'ddir_last': np.nan, 
+           'distance_moved': np.nan, 'time_in_air': np.nan}
     if len(g) >= 2:
         out['dx_last'] = g['x'].iloc[-1] - g['x'].iloc[0]
         out['dy_last'] = g['y'].iloc[-1] - g['y'].iloc[0]
         out['ds_last'] = g['s'].iloc[-1] - g['s'].iloc[0]
+        dx = g['x'].iloc[-1] - g['x'].iloc[0]
+        dy = g['y'].iloc[-1] - g['y'].iloc[0]
+        out['distance_moved'] = np.sqrt(dx**2 + dy**2)
         # wrap angle difference to [-180,180]
         out['ddir_last'] = ((g['dir'].iloc[-1] - g['dir'].iloc[0] + 180) % 360) - 180
+        # number of frames the ball is in the air
+        fps = 10
+        num_frames = g['num_frames_output'].iloc[0]
+        out['time_in_air'] = num_frames / fps
     return pd.Series(out)
 deltas = df_sorted.groupby(['game_id','play_id','nfl_id']).apply(last_deltas).reset_index()
 release_df = release_df.merge(deltas, on=['game_id','play_id','nfl_id'], how='left')
@@ -103,8 +113,7 @@ release_df = release_df.merge(deltas, on=['game_id','play_id','nfl_id'], how='le
 release_df['is_targeted'] = (release_df['player_role'] == 'Targeted Receiver').astype(int)
 release_df['is_passer'] = (release_df['player_role'] == 'Passer').astype(int)
 release_df['is_defense'] = (release_df['player_side'] == 'Defense').astype(int)
-release_df['is_receiver'] = (release_df['player_role'] == 'Targeted Receiver').astype(int)
-release_df['role_targeted_receiver'] = release_df['is_receiver']
+release_df['role_targeted_receiver'] = release_df['is_targeted']
 release_df['is_offense'] = (release_df['player_side'] == 'Offense').astype(int)
 release_df['is_coverage'] = (release_df['player_role'] == 'Defensive Coverage').astype(int)
 release_df['defensive_coverage'] = release_df['is_coverage']
@@ -276,8 +285,8 @@ features = [
     'squared_speed','momentum_x','momentum_y',
     'combined_acceleration','speed_m_s','kinetic_energy',
     'left_distance','right_distance',
-    'is_targeted','is_passer','is_defense','role_targeted_receiver','is_offense','is_receiver','is_coverage',
-    'defensive_coverage','offensive_side','passing_role']
+    'is_targeted','is_passer','is_defense','role_targeted_receiver','is_offense','is_coverage',
+    'defensive_coverage','offensive_side','passing_role', 'time_in_air', 'distance_moved', 'player_bmi', 'ball_land_x', 'ball_land_y']
 
 # check NaN % number
 nan_percent = (release_df[features].isna().mean() * 100).sort_values(ascending=False)
@@ -297,6 +306,7 @@ print(release_df[features[21:27]].describe())
 print(release_df[features[27:35]].describe())
 print(release_df[features[35:]].describe())
 feature_dtypes = release_df[features].dtypes
+
 # dtype checking
 for col, dtype in feature_dtypes.items():
     print(f"{col}: {dtype}")
