@@ -304,7 +304,7 @@ def preprocess_test_data(df: pd.DataFrame) -> pd.DataFrame:
 def training_data(test: pd.DataFrame, test_input: pd.DataFrame) -> pd.DataFrame:
     """
     Function merging both input and output data files into one.
-    The output is the final training_data_model.csv file to train the CatBoost model.
+    The output is the final final_training_model.csv file to train the CatBoost model.
     """
     if not isinstance(test, pd.DataFrame):
         test = test.to_pandas()
